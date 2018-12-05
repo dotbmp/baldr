@@ -6,7 +6,7 @@
  *  @Creation: 03-12-2018 09:09:31 UTC-5
  *
  *  @Last By:   Brendan Punsky
- *  @Last Time: 04-12-2018 23:50:57 UTC-5
+ *  @Last Time: 05-12-2018 05:45:31 UTC-5
  *  
  *  @Description:
  *  
@@ -25,7 +25,6 @@ when os.OS == "windows" {
 
 import "bp:path"
 import "bp:process"
-using import "bp:remove"
 
 import "shared:odin-json"
 
@@ -50,14 +49,16 @@ build_mode_string :: proc(mode: Build_Mode) -> string {
 }
 
 Build_Settings :: struct {
-    project_path: string,
-    build_mode:   Build_Mode,
-    out:          string,
-    opt:          int,
-    debug:        bool,
-    keep_temp:    bool,
-    bounds_check: bool,
-    collections:  [dynamic]Collection,
+    project_path:   string,
+    build_mode:     Build_Mode,
+    out:            string,
+    opt:            int,
+    debug:          bool,
+    keep_temp:      bool,
+    bounds_check:   bool,
+    lib_collection: Collection,
+    collections:    [dynamic]Collection,
+    dependencies:   [dynamic]string,
 }
 
 
@@ -90,6 +91,7 @@ usage :: proc() {
     println("    * collection <name> <path>: add a collection");
     println("  remove: remove an element from settings with arbitrary arguments");
     println("    * collection <name>: remove a collection");
+    println("  update: update project dependencies");
     println("  help:   show this screen");
 }
 
@@ -104,16 +106,57 @@ init :: proc(using settings: ^Build_Settings) {
         win32.create_directory_a(cpath, nil);
     }
 
-    project_path = path.current();
-    out          = path.name(project_path);
-    build_mode   = Build_Mode.EXE;
-    opt          = 0;
-    debug        = false;
-    keep_temp    = false;
-    bounds_check = false;
-    collections  = {
-        {"lib", lib_path}
-    };
+    project_path   = path.current();
+    out            = path.name(project_path);
+    build_mode     = Build_Mode.EXE;
+    opt            = 0;
+    debug          = false;
+    keep_temp      = false;
+    bounds_check   = false;
+    lib_collection = {"lib", lib_path};
+    collections    = {};
+    dependencies   = {};
+}
+
+update_dependency :: proc(using settings: ^Build_Settings, dependency: string) {
+    name := path.name(dependency);
+
+    dir := concat(lib_collection.path, path.SEPARATOR_STRING, name);
+    defer delete(dir);
+
+    if path.is_dir(dir) {
+        current := path.current();
+        defer delete(current);
+
+        when os.OS == "windows" {
+            win32.set_current_directory_a(strings.new_cstring(dir));
+        }
+
+        process.create("git stash");
+        process.create("git pull");
+
+        when os.OS == "windows" {
+            win32.set_current_directory_a(strings.new_cstring(current));
+        }
+    }
+    else {
+        current := path.current();
+        defer delete(current);
+
+        when os.OS == "windows" {
+            win32.set_current_directory_a(strings.new_cstring(lib_collection.path));
+        }
+
+        process.create("git clone %s", dependency);
+
+        when os.OS == "windows" {
+            win32.set_current_directory_a(strings.new_cstring(current));
+        }
+    }
+}
+
+remove_dependency :: proc(using settings: ^Build_Settings, dependency: string) {
+    // @todo(bp): remove dependency directory, recursively deleting files
 }
 
 concat :: proc(strs: ..string) -> string #no_bounds_check {
@@ -141,7 +184,8 @@ main :: proc() {
         using settings: Build_Settings;
 
         if !json.unmarshal_file(settings, concat(path.current(), path.SEPARATOR_STRING, "package.json")) {
-            project_path = path.current();
+            println_err("package.json failed to load.");
+            return;
         }
  
         switch os.args[1] {
@@ -151,16 +195,18 @@ main :: proc() {
             defer delete(buf);
 
             if project_path == "" {
-                project_path = path.current();
+                project_path = concat(".", path.SEPARATOR_STRING);
             }
 
             sbprintf(&buf, `odin %s "%s"`, os.args[1], path.rel(project_path));
             sbprintf(&buf, ` -out="%s.%s"`, out, build_mode_string(build_mode));
-            sbprintf(&buf, " -build-mode=%s", build_mode_string(build_mode));
+            sbprintf(&buf, ` -build-mode=%s`, build_mode_string(build_mode));
             sbprintf(&buf, ` -opt=%d`, opt);
             if debug         do sbprint(&buf, " -debug");
-            if keep_temp     do sbprint(&buf, " -keep_temp_files");
+            if keep_temp     do sbprint(&buf, " -keep-temp-files");
             if !bounds_check do sbprint(&buf, " -no-bounds-check");
+
+            sbprintf(&buf, ` -collection="%s"="%s"`, lib_collection.name, path.rel(lib_collection.path));
 
             for collection in collections {
                 sbprintf(&buf, ` -collection="%s"="%s"`, collection.name, path.rel(collection.path));
@@ -172,10 +218,12 @@ main :: proc() {
             if len(os.args) > 2 {
                 json.unmarshal_file(settings, os.args[2]);
             }
+
         case "save":
             if len(os.args) > 2 {
                 json.marshal_file(os.args[2], settings);
             }
+
         case "toggle":
             if len(os.args) == 3 {
                 switch os.args[2] {
@@ -227,6 +275,8 @@ main :: proc() {
                         switch os.args[3] {
                         case "true":  debug = true;
                         case "false": debug = false;
+                        case "on":    debug = true;
+                        case "off":   debug = false;
                         case:
                             println_err("Invalid boolean argument.");
                             return;
@@ -238,6 +288,8 @@ main :: proc() {
                         switch os.args[3] {
                         case "true":  keep_temp = true;
                         case "false": keep_temp = false;
+                        case "on":    keep_temp = true;
+                        case "off":   keep_temp = false;
                         case:
                             println_err("Invalid boolean argument.");
                             return;
@@ -249,10 +301,18 @@ main :: proc() {
                         switch os.args[3] {
                         case "true":  bounds_check = true;
                         case "false": bounds_check = false;
+                        case "on":    bounds_check = true;
+                        case "off":   bounds_check = false;
                         case:
                             println_err("Invalid boolean argument.");
                             return;
                         }
+                    }
+
+                case "lib_collection":
+                    if len(os.args) == 5 {
+                        lib_collection.name = os.args[3];
+                        lib_collection.path = os.args[4];
                     }
                 }
             }
@@ -264,6 +324,12 @@ main :: proc() {
                     if len(os.args) == 5 {
                         append(&collections, Collection{os.args[3], os.args[4]});
                     }
+
+                case "dependency":
+                    if len(os.args) == 4 {
+                        append(&dependencies, os.args[3]);
+                        update_dependency(&settings, os.args[3]);
+                    }
                 }
             }
 
@@ -274,7 +340,18 @@ main :: proc() {
                     if len(os.args) == 4 {
                         for collection, i in collections {
                             if collection.name == os.args[3] {
-                                remove_unordered(&collections, i);
+                                unordered_remove(&collections, i);
+                                break;
+                            }
+                        }
+                    }
+
+                case "dependency":
+                    if len(os.args) == 4 {
+                        for dependency, i in dependencies {
+                            if dependency == os.args[3] {
+                                unordered_remove(&collections, i);
+                                remove_dependency(&settings, dependency);
                                 break;
                             }
                         }
@@ -282,14 +359,18 @@ main :: proc() {
                 }
             }
 
+        case "update":
+            for dependency in dependencies {
+                update_dependency(&settings, dependency);
+            }
+
         case "help":  fallthrough;
         case:         usage();
         }
 
         json.marshal_file(concat(path.current(), path.SEPARATOR_STRING, "package.json"), settings);
-
-        return;
     }
-
-    usage();
+    else {
+        usage();
+    }
 }

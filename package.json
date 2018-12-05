@@ -1,0 +1,20 @@
+{
+    "project_path": "C:\\odin\\shared\\baldr",
+    "build_mode": "DLL",
+    "out": "baldr",
+    "opt": 0,
+    "debug": false,
+    "keep_temp": false,
+    "bounds_check": true,
+    "lib_collection": {
+        "name": "lib",
+        "path": ".\\lib"
+    },
+    "collections": [
+        {
+            "name": "bp",
+            "path": "C:\\odin\\shared\\bp"
+        }
+    ],
+    "dependencies": []
+}
