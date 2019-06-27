@@ -1,14 +1,15 @@
 {
     "project_path": "C:\\odin\\shared\\baldr",
-    "build_mode": "DLL",
+    "build_mode": "EXE",
     "out": "baldr",
     "opt": 0,
     "debug": false,
     "keep_temp": false,
-    "bounds_check": true,
+    "bounds_check": false,
+    "vetting": false,
     "lib_collection": {
         "name": "lib",
-        "path": ".\\lib"
+        "path": "C:\\odin\\shared\\baldr\\lib"
     },
     "collections": [
         {
